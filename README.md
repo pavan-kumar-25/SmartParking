@@ -49,30 +49,35 @@ git clone https://github.com/pavan-kumar-25/SmartParking.git
 cd SmartParking
 ```
 
-Usage
-Prepare Input Files:
+## Usage
+
 
 Place the parking lot video in the data/ folder. Example: parking_1920_1080.mp4.
 Ensure the parking mask (mask_1920_1080.png) aligns with the video.
 Run the Application:
 
-bash
-Copy code
+```bash
 python main.py
-Output:
+```
+
+## Output:
 
 The video will play with bounding boxes around parking spots:
 Green: Empty spot
 Red: Occupied spot
 A counter at the top left shows available spots out of the total.
-Quit:
+
+## Quit:
 
 Press q to stop the video and exit the application.
 
 
-Key Functions
+## Key Functions
 
 
 calc_diff(im1, im2): Calculates the difference between two image crops to detect changes in parking spots.
+
 get_parking_spots_bboxes: Extracts parking spot bounding boxes from the connected components of the mask.
+
 empty_or_not: Determines whether a parking spot is empty or occupied using the cropped image of the spot.
+
