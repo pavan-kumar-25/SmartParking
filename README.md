@@ -13,7 +13,20 @@
 ---
 
 ## Repository Structure
-SmartParking/ ├── main.py # Main script for processing and monitoring ├── util.py # Utility functions for detection and preprocessing ├── mask_1920_1080.png # Mask image defining parking spot locations ├── data/ │ └── parking_1920_1080.mp4 # Sample parking video for demonstration ├── model/ │ └── model.p # Pre-trained machine learning model (SVC) ├── requirements.txt # Python dependencies └── README.md # Project documentation
+parking/
+├── __pycache__/
+├── data/
+│   ├── Busy Parking.mp4
+│   └── parking_1920_1080.mp4
+├── env/
+├── model/
+│   └── model.p
+├── main.py
+├── mask_1920_1080.png
+├── mask_crop.png
+├── requirements.txt
+└── util.py
+
 
 
 ---
@@ -36,20 +49,29 @@ cd SmartParking
 ```
 
 Usage
-Run the script with the required arguments:
+Prepare Input Files:
 
-python main.py --mask_path mask_1920_1080.png --video_path data/parking_1920_1080.mp4 --model_path model/model.p
-Arguments
---mask_path: Path to the mask image file (e.g., mask_1920_1080.png).
---video_path: Path to the parking video file (e.g., data/parking_1920_1080.mp4).
---model_path: Path to the pre-trained SVC model (e.g., model/model.p).
+Place the parking lot video in the data/ folder. Example: parking_1920_1080.mp4.
+Ensure the parking mask (mask_1920_1080.png) aligns with the video.
+Run the Application:
 
-Output
-The script processes the video feed and:
+bash
+Copy code
+python main.py
+Output:
 
-Detects parking spots defined in the mask file.
-Displays a real-time video feed with:
-Green Boxes: Available parking spots.
-Red Boxes: Occupied parking spots.
-Displays the count of available spots on the video.
-Press q to exit the video display.
+The video will play with bounding boxes around parking spots:
+Green: Empty spot
+Red: Occupied spot
+A counter at the top left shows available spots out of the total.
+Quit:
+
+Press q to stop the video and exit the application.
+
+
+Key Functions
+
+
+calc_diff(im1, im2): Calculates the difference between two image crops to detect changes in parking spots.
+get_parking_spots_bboxes: Extracts parking spot bounding boxes from the connected components of the mask.
+empty_or_not: Determines whether a parking spot is empty or occupied using the cropped image of the spot.
