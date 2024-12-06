@@ -13,6 +13,7 @@
 ---
 
 ## Repository Structure
+```bash
 parking/
 ├── __pycache__/
 ├── data/
@@ -26,7 +27,7 @@ parking/
 ├── mask_crop.png
 ├── requirements.txt
 └── util.py
-
+```
 
 
 ---
