@@ -1,100 +1,168 @@
 import cv2
-import os
-from utils import create_mask, extract_parking_spots, empty_or_not, train_model
+import numpy as np
+from sklearn.cluster import DBSCAN
 
-VIDEO_PATH = "data/"
-OUTPUT_PATH = "output/"
-FRAME_SIZE = (640, 480)  # Resize frame size to reduce computational cost
-FRAME_SAMPLE_RATE = 10  # Process every 10th frame to reduce training time
-
-# Initialize background subtractor (for detecting changes)
-fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=True)
-
-def process_video(video_file):
-    """Process video and detect empty/occupied spots."""
-    # Read the video file
-    cap = cv2.VideoCapture(VIDEO_PATH + video_file)
-
-    # Create the output folder
-    os.makedirs(OUTPUT_PATH, exist_ok=True)
-
-    frame_count = 0
-    labeled_data = []  # Store labeled data for training
-    model_trained = False  # Flag to check if the model is trained
+class MaskBasedParkingDetector:
+    def __init__(self):
+        self.reference_mask = None
+        self.parking_spaces = []
+        self.background_model = cv2.createBackgroundSubtractorMOG2(
+            history=500, varThreshold=16, detectShadows=True)
     
+    def create_reference_mask(self, frame):
+        """Create binary mask from reference frame"""
+        # Convert to grayscale
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # Apply Gaussian blur to reduce noise
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        
+        # Apply adaptive thresholding
+        binary = cv2.adaptiveThreshold(
+            blurred, 255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV, 19, 2
+        )
+        
+        # Morphological operations to clean up the mask
+        kernel = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        
+        self.reference_mask = mask
+        return mask
+    
+    def find_parking_slots(self, mask):
+        """Find parking slots using contour detection on the mask"""
+        # Find contours in the mask
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Filter contours based on area and shape
+        slots = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            
+            # Filter based on area (adjust thresholds as needed)
+            if 1000 < area < 20000:
+                # Get bounding rectangle
+                x, y, w, h = cv2.boundingRect(contour)
+                
+                # Check aspect ratio
+                aspect_ratio = float(w) / h
+                if 0.4 < aspect_ratio < 2.5:
+                    slots.append((x, y, x + w, y + h))
+        
+        # Cluster nearby rectangles
+        if slots:
+            # Convert to numpy array for clustering
+            points = np.array([[rect[0], rect[1]] for rect in slots])
+            clustering = DBSCAN(eps=50, min_samples=2).fit(points)
+            
+            # Process clusters
+            unique_labels = set(clustering.labels_)
+            final_slots = []
+            
+            for label in unique_labels:
+                if label != -1:  # Ignore noise
+                    cluster_points = points[clustering.labels_ == label]
+                    # Average the rectangles in each cluster
+                    avg_x = np.mean([slots[i][0] for i in np.where(clustering.labels_ == label)[0]])
+                    avg_y = np.mean([slots[i][1] for i in np.where(clustering.labels_ == label)[0]])
+                    avg_w = np.mean([slots[i][2] - slots[i][0] for i in np.where(clustering.labels_ == label)[0]])
+                    avg_h = np.mean([slots[i][3] - slots[i][1] for i in np.where(clustering.labels_ == label)[0]])
+                    
+                    final_slots.append((
+                        int(avg_x), int(avg_y),
+                        int(avg_x + avg_w), int(avg_y + avg_h)
+                    ))
+            
+            self.parking_spaces = final_slots
+            return final_slots
+        
+        return []
+    
+    def detect_occupancy(self, frame):
+        """Detect occupancy using background subtraction and the reference mask"""
+        # Apply background subtraction
+        fg_mask = self.background_model.apply(frame)
+        
+        # Apply threshold to get binary mask
+        _, thresh = cv2.threshold(fg_mask, 128, 255, cv2.THRESH_BINARY)
+        
+        # Process each parking space
+        frame_display = frame.copy()
+        for x1, y1, x2, y2 in self.parking_spaces:
+            # Extract ROI from current frame mask
+            roi_mask = thresh[y1:y2, x1:x2]
+            
+            # Calculate occupancy based on white pixel ratio
+            white_pixels = np.sum(roi_mask > 0)
+            total_pixels = roi_mask.size
+            occupancy_ratio = white_pixels / total_pixels
+            
+            # Determine if occupied (adjust threshold as needed)
+            is_occupied = occupancy_ratio > 0.3
+            
+            # Draw results
+            color = (0, 0, 255) if is_occupied else (0, 255, 0)
+            cv2.rectangle(frame_display, (x1, y1), (x2, y2), color, 2)
+            status = "Occupied" if is_occupied else "Empty"
+            cv2.putText(frame_display, status, (x1, y1-10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            
+            # Show occupancy ratio for debugging
+            ratio_text = f"{occupancy_ratio:.2f}"
+            cv2.putText(frame_display, ratio_text, (x1, y2+20),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        
+        return frame_display
+
+def main():
+    # Initialize detector
+    detector = MaskBasedParkingDetector()
+    
+    # Open video file
+    video_path = 'Busy Parking.mp4'
+    cap = cv2.VideoCapture(video_path)
+    
+    if not cap.isOpened():
+        print("Error: Could not open video file")
+        return
+    
+    # Read first frame for creating reference mask
+    ret, frame = cap.read()
+    if not ret:
+        print("Error: Could not read video frame")
+        return
+    
+    # Create reference mask and find parking slots
+    print("Creating reference mask...")
+    mask = detector.create_reference_mask(frame)
+    
+    print("Finding parking slots...")
+    slots = detector.find_parking_slots(mask)
+    print(f"Found {len(slots)} parking slots")
+    
+    # Show reference mask and detected slots
+    cv2.imshow('Reference Mask', mask)
+    
+    # Process video frames
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
         
-        # Process only every 'FRAME_SAMPLE_RATE'-th frame to reduce training time
-        if frame_count % FRAME_SAMPLE_RATE != 0:
-            frame_count += 1
-            continue
+        # Detect and display results
+        result_frame = detector.detect_occupancy(frame)
         
-        # Resize frame
-        frame_resized = cv2.resize(frame, FRAME_SIZE)
-
-        # Create mask for the current frame
-        mask = create_mask(frame_resized)
+        cv2.imshow('Parking Detection', result_frame)
         
-        # Extract parking spots
-        spots = extract_parking_spots(frame_resized, mask)
-
-        # Apply background subtraction to detect occupied spots
-        fgmask = fgbg.apply(frame_resized)
-        fgmask = cv2.threshold(fgmask, 200, 255, cv2.THRESH_BINARY)[1]  # Threshold to clean up mask
-        
-        # Process each parking spot automatically
-        for spot in spots:
-            x, y, w, h = spot
-            spot_image = frame_resized[y:y+h, x:x+w]
-            
-            # Check if the parking spot has significant movement (occupied or empty)
-            spot_mask = fgmask[y:y+h, x:x+w]
-            non_zero_count = cv2.countNonZero(spot_mask)  # Count non-zero pixels in the mask
-
-            # If non-zero pixels are detected, the spot is likely occupied
-            label = 1 if non_zero_count > 500 else 0  # Threshold can be adjusted based on spot size
-
-            labeled_data.append((spot_image, label))
-
-        # Only call the model for predictions after collecting enough labeled data
-        if labeled_data:
-            # Train the model after labeling
-            model = train_model(labeled_data)
-            model_trained = True
-            print("Model trained and saved.")
-        
-        # Once the model is trained, predict using the trained model
-        if model_trained:
-            for spot in spots:
-                x, y, w, h = spot
-                spot_image = frame_resized[y:y+h, x:x+w]
-                
-                # Predict using the trained model
-                result = empty_or_not(spot_image)
-                color = (0, 255, 0) if result == 0 else (0, 0, 255)
-                cv2.rectangle(frame_resized, (x, y), (x+w, y+h), color, 2)
-        
-        # Show the frame with bounding boxes
-        cv2.imshow("Parking Spot Detection", frame_resized)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-        
-        frame_count += 1
-
+    
     cap.release()
     cv2.destroyAllWindows()
 
-    # Ensure model is trained before ending
-    if labeled_data and model_trained:
-        model = train_model(labeled_data)
-        print("Model trained and saved.")
-    else:
-        print("No labeled data to train the model.")
-
 if __name__ == "__main__":
-    # Process the video and train the model
-    video_file = "Busy Parking.mp4"  # Add your video file here
-    process_video(video_file)
+    main()
